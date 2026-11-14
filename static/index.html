@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e0f12">
+<title>Remote Mouse</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --surface: #17191e;
+    --surface-2: #20232a;
+    --line: #2b2f38;
+    --text: #e8eaef;
+    --muted: #8a90a0;
+    --accent: #5b8cff;
+    --ok: #3ecf8e;
+    --warn: #f5a524;
+    --bad: #f2555a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, system-ui, sans-serif;
+    overscroll-behavior: none;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  body {
+    display: flex; flex-direction: column; gap: 10px;
+    height: 100dvh; overflow: hidden;
+    padding: calc(env(safe-area-inset-top) + 10px) 12px calc(env(safe-area-inset-bottom) + 12px);
+  }
+  button {
+    font: inherit; color: inherit;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
+    padding: 9px 14px;
+  }
+
+  header { display: flex; align-items: center; gap: 8px; }
+  .status { flex: 1; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; min-width: 0; }
+  .status span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  #air { font-weight: 600; min-width: 92px; }
+  #air[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #pad {
+    flex: 1; position: relative;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+    touch-action: none;
+    display: grid; place-items: center;
+    color: var(--muted); font-size: 13px; text-align: center; padding: 20px;
+  }
+  #pad.touching { border-color: var(--accent); }
+  #hint { max-width: 260px; pointer-events: none; }
+
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 22vh; max-height: 170px; min-height: 100px; }
+  .mouse-btn { border-radius: 18px; font-size: 16px; font-weight: 600; touch-action: none; }
+  .mouse-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .sheet {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(0, 0, 0, .6);
+    display: flex; align-items: flex-end;
+  }
+  .sheet[hidden] { display: none; }
+  .sheet > div {
+    width: 100%; background: var(--surface); border-top: 1px solid var(--line);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 16px calc(env(safe-area-inset-bottom) + 16px);
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .sheet h2 { margin: 0; font-size: 17px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .row label { flex: 1; }
+  .row input[type="range"] { flex: 1.3; accent-color: var(--accent); }
+  .row input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); }
+  .note { color: var(--muted); font-size: 13px; margin: 0; }
+
+  #start { align-items: center; justify-content: center; background: var(--bg); }
+  #start > div { border: none; border-radius: 0; background: none; max-width: 360px; text-align: center; align-items: center; }
+  #start h1 { margin: 0; font-size: 22px; }
+  #start button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 14px 32px; font-size: 17px; }
+  .error { color: var(--bad); }
+</style>
+</head>
+<body>
+  <header>
+    <div class="status"><span class="dot" id="dot"></span><span id="status-text">Not connected</span></div>
+    <button id="air" aria-pressed="false">Air: off</button>
+    <button id="open-settings" aria-label="Settings">⚙︎</button>
+  </header>
+
+  <div id="pad">
+    <div id="hint">
+      Drag to move · tap to click<br>
+      Two-finger tap: right click · two-finger drag: scroll<br><br>
+      Turn on <b>Air</b> and point the phone to move the cursor.<br>
+      Rest a finger here to pause it.
+    </div>
+  </div>
+
+  <div class="buttons">
+    <button class="mouse-btn" data-button="left">Left</button>
+    <button class="mouse-btn" data-button="right">Right</button>
+  </div>
+
+  <div class="sheet" id="settings" hidden>
+    <div>
+      <h2>Settings</h2>
+      <div class="row"><label for="airSpeed">Air speed</label><input type="range" id="airSpeed" min="0.2" max="3" step="0.1"></div>
+      <div class="row"><label for="airSmoothing">Air smoothing</label><input type="range" id="airSmoothing" min="0" max="1" step="0.05"></div>
+      <div class="row"><label for="padSpeed">Touchpad speed</label><input type="range" id="padSpeed" min="0.5" max="4" step="0.1"></div>
+      <div class="row"><label for="invertX">Invert air horizontal</label><input type="checkbox" id="invertX"></div>
+      <div class="row"><label for="invertY">Invert air vertical</label><input type="checkbox" id="invertY"></div>
+      <div class="row"><label for="naturalScroll">Natural scrolling</label><input type="checkbox" id="naturalScroll"></div>
+      <p class="note">Hold the phone any way you like and point. Rest a finger on the pad to pause Air while you reposition your hand. More smoothing means steadier but slightly laggier.</p>
+      <p class="note" id="sensor-info"></p>
+      <button id="close-settings">Done</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="start">
+    <div>
+      <h1>Remote Mouse</h1>
+      <p class="note" id="start-note">Your phone becomes an air mouse and touchpad for your Mac.</p>
+      <button id="start-btn">Start</button>
+    </div>
+  </div>
+
+<script src="air.js"></script>
+<script>
+'use strict';
+
+const token = new URLSearchParams(location.search).get('token') || '';
+const $ = (id) => document.getElementById(id);
+
+// ---------- settings ----------
+
+const DEFAULTS = { airSpeed: 1, airSmoothing: 0.5, padSpeed: 1.5, invertX: false, invertY: false, naturalScroll: true };
+const STORAGE_KEY = 'remote-mouse-v2';
+const settings = { ...DEFAULTS };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')); } catch {}
+
+function saveSettings() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch {}
+}
+
+for (const key of Object.keys(DEFAULTS)) {
+  const input = $(key);
+  const isBool = typeof DEFAULTS[key] === 'boolean';
+  if (isBool) input.checked = settings[key]; else input.value = settings[key];
+  input.addEventListener('input', () => {
+    settings[key] = isBool ? input.checked : Number(input.value);
+    saveSettings();
+    if (key === 'airSmoothing') applySmoothing();
+  });
+}
+$('open-settings').onclick = () => {
+  $('sensor-info').textContent = `Motion sensor: ${sensorName}`;
+  $('settings').hidden = false;
+};
+$('close-settings').onclick = () => { $('settings').hidden = true; };
+$('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').hidden = true; });
+
+// ---------- status ----------
+
+function setStatus(level, text) {
+  $('dot').className = 'dot ' + level;
+  $('status-text').textContent = text;
+}
+
+// ---------- transport ----------
+// WebSocket normally; falls back to batched HTTP POSTs if the browser won't
+// open a WebSocket to a self-signed host (some iOS versions).
+
+const transport = {
+  ws: null,
+  useHttp: false,
+  opened: false,
+  failures: 0,
+  inFlight: false,
+  backlog: [],
+
+  connect() {
+    if (this.useHttp) { setStatus('ok', 'Connected (HTTP mode)'); return; }
+    setStatus('warn', 'Connecting…');
+    const ws = new WebSocket(`wss://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    this.ws = ws;
+    ws.onopen = () => { this.opened = true; setStatus('ok', 'Connected'); };
+    ws.onclose = () => {
+      this.ws = null;
+      if (!this.opened && ++this.failures >= 2) this.useHttp = true;
+      else setStatus('bad', 'Disconnected, retrying…');
+      setTimeout(() => this.connect(), 1000);
+    };
+  },
+
+  send(batch) {
+    if (this.useHttp) { this.backlog.push(...batch); this.post(); return; }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(batch));
+  },
+
+  async post() {
+    if (this.inFlight || !this.backlog.length) return;
+    const batch = this.backlog;
+    this.backlog = [];
+    this.inFlight = true;
+    try {
+      const res = await fetch(`/input?token=${encodeURIComponent(token)}`, { method: 'POST', body: JSON.stringify(batch) });
+      setStatus(res.ok ? 'ok' : 'bad', res.ok ? 'Connected (HTTP mode)' : 'Rejected, rescan the QR code');
+    } catch {
+      setStatus('bad', 'Disconnected');
+    } finally {
+      this.inFlight = false;
+      this.post();
+    }
+  },
+};
+
+// Movement is accumulated and sent once per animation frame.
+const pendingMove = { dx: 0, dy: 0 };
+const pendingScroll = { dx: 0, dy: 0 };
+
+function flush(extra) {
+  const batch = [];
+  if (pendingMove.dx || pendingMove.dy) {
+    batch.push({ t: 'move', dx: +pendingMove.dx.toFixed(2), dy: +pendingMove.dy.toFixed(2) });
+    pendingMove.dx = pendingMove.dy = 0;
+  }
+  if (pendingScroll.dx || pendingScroll.dy) {
+    batch.push({ t: 'scroll', dx: +pendingScroll.dx.toFixed(2), dy: +pendingScroll.dy.toFixed(2) });
+    pendingScroll.dx = pendingScroll.dy = 0;
+  }
+  if (extra) batch.push(extra);
+  if (batch.length) transport.send(batch);
+}
+
+function frame() { flush(); requestAnimationFrame(frame); }
+
+function buzz() { if (navigator.vibrate) navigator.vibrate(8); }
+
+// ---------- air mouse ----------
+// The phone's fused orientation goes through AirPointer (air.js), which makes
+// the result independent of grip and filters out hand tremor.
+
+const AIR_PX_PER_DEG = 30;
+const CLICK_FREEZE_MS = 150;  // phones wobble when you press a button
+
+const air = new AirPointer();
+let airOn = false;
+let airFrozenUntil = 0;
+let lastReadingAt = 0;
+let sensorName = 'none';
+
+function smoothstep(a, b, x) {
+  const u = Math.min(Math.max((x - a) / (b - a), 0), 1);
+  return u * u * (3 - 2 * u);
+}
+
+function applySmoothing() {
+  // 0 = snappy (4 Hz cutoff when still), 1 = very smooth (0.5 Hz)
+  air.setSmoothing(4 * Math.pow(0.125, settings.airSmoothing));
+}
+
+function onOrientation(q, timeMs) {
+  lastReadingAt = performance.now();
+  const { dx, dy, speed } = air.update(q, timeMs);  // always update so the filter stays warm
+  if (!airOn || pointers.size || performance.now() < airFrozenUntil) return;
+
+  // Ignore idle drift and tremor; accelerate fast flicks so crossing the screen is easy.
+  const gate = smoothstep(0.6, 2.0, speed);
+  const gain = AIR_PX_PER_DEG * settings.airSpeed * (0.45 + 1.55 * smoothstep(4, 70, speed)) * gate;
+  pendingMove.dx += dx * gain * (settings.invertX ? -1 : 1);
+  pendingMove.dy += dy * gain * (settings.invertY ? -1 : 1);
+}
+
+function screenAngle() {
+  return screen.orientation?.angle ?? window.orientation ?? 0;
+}
+
+function startSensors() {
+  // Android Chrome: the OS's own gyro + accelerometer fusion, already in screen coordinates.
+  if ('RelativeOrientationSensor' in window) {
+    try {
+      const sensor = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'screen' });
+      sensor.addEventListener('reading', () => {
+        if (sensor.quaternion) onOrientation(sensor.quaternion, sensor.timestamp);
+      });
+      sensor.addEventListener('error', () => { sensor.stop(); useDeviceOrientation(); });
+      sensor.start();
+      sensorName = 'RelativeOrientationSensor';
+      return;
+    } catch {}
+  }
+  useDeviceOrientation();
+}
+
+// iPhone and older browsers.
+function useDeviceOrientation() {
+  if (sensorName === 'deviceorientation') return;
+  sensorName = 'deviceorientation';
+  air.reset();
+  window.addEventListener('deviceorientation', (e) => {
+    if (e.alpha == null) return;
+    onOrientation(toScreenFrame(quatFromEuler(e.alpha, e.beta, e.gamma), screenAngle()), e.timeStamp);
+  });
+}
+
+// Rotating the page changes the coordinate frame; don't read that as a huge movement.
+screen.orientation?.addEventListener('change', () => air.reset());
+window.addEventListener('orientationchange', () => air.reset());
+
+function setAir(on) {
+  airOn = on;
+  air.reset();
+  $('air').setAttribute('aria-pressed', String(on));
+  $('air').textContent = on ? 'Air: on' : 'Air: off';
+  if (on) {
+    setTimeout(() => {
+      if (airOn && performance.now() - lastReadingAt > 1000) {
+        setAir(false);
+        alert('No motion sensor data from this browser. Check motion permissions, or use the touchpad.');
+      }
+    }, 1500);
+  }
+}
+$('air').onclick = () => { setAir(!airOn); buzz(); };
+
+// ---------- touchpad ----------
+
+const pad = $('pad');
+const pointers = new Map();
+let gesture = null;
+const TAP_MS = 250;
+const TAP_SLOP = 10;
+
+pad.addEventListener('pointerdown', (e) => {
+  pad.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  pad.classList.add('touching');
+  if (!gesture) gesture = { start: performance.now(), fingers: 0, travel: 0 };
+  gesture.fingers = Math.max(gesture.fingers, pointers.size);
+});
+
+pad.addEventListener('pointermove', (e) => {
+  const p = pointers.get(e.pointerId);
+  if (!p || !gesture) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  const dist = Math.hypot(dx, dy);
+  gesture.travel += dist;
+
+  if (pointers.size === 1) {
+    const gain = settings.padSpeed * (1 + Math.min(dist / 12, 2));
+    pendingMove.dx += dx * gain;
+    pendingMove.dy += dy * gain;
+  } else if (pointers.size === 2) {
+    const dir = settings.naturalScroll ? 1 : -1;
+    pendingScroll.dx += (dx / 2) * 1.5 * dir;
+    pendingScroll.dy += (dy / 2) * 1.5 * dir;
+  }
+});
+
+function endPointer(e) {
+  if (!pointers.delete(e.pointerId) || pointers.size || !gesture) return;
+  pad.classList.remove('touching');
+  if (performance.now() - gesture.start < TAP_MS && gesture.travel < TAP_SLOP) {
+    flush({ t: 'click', b: gesture.fingers >= 2 ? 'right' : 'left' });
+    buzz();
+  }
+  gesture = null;
+}
+pad.addEventListener('pointerup', endPointer);
+pad.addEventListener('pointercancel', endPointer);
+
+// ---------- physical-style buttons (hold Left + move to drag) ----------
+
+const mouseButtons = [...document.querySelectorAll('.mouse-btn')];
+
+function releaseButton(el) {
+  if (!el.classList.contains('active')) return;
+  el.classList.remove('active');
+  airFrozenUntil = performance.now() + CLICK_FREEZE_MS;
+  flush({ t: 'button', b: el.dataset.button, down: false });
+}
+
+for (const el of mouseButtons) {
+  el.addEventListener('pointerdown', (e) => {
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('active');
+    airFrozenUntil = performance.now() + CLICK_FREEZE_MS;
+    flush({ t: 'button', b: el.dataset.button, down: true });
+    buzz();
+  });
+  el.addEventListener('pointerup', () => releaseButton(el));
+  el.addEventListener('pointercancel', () => releaseButton(el));
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// ---------- startup ----------
+
+let wakeLock = null;
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') keepAwake();
+  else mouseButtons.forEach(releaseButton);
+});
+
+function startError(msg) {
+  $('start-note').textContent = msg;
+  $('start-note').classList.add('error');
+}
+
+async function start() {
+  // iOS asks for motion permission, and only from inside a tap handler.
+  const asks = [];
+  if (typeof DeviceMotionEvent?.requestPermission === 'function') asks.push(DeviceMotionEvent.requestPermission());
+  if (typeof DeviceOrientationEvent?.requestPermission === 'function') asks.push(DeviceOrientationEvent.requestPermission());
+  const answers = await Promise.all(asks.map((p) => p.catch(() => 'denied')));
+  const motionAllowed = answers.every((a) => a === 'granted');
+
+  try {
+    const res = await fetch(`/ping?token=${encodeURIComponent(token)}`);
+    if (res.status === 403) return startError('This link is out of date. Scan the QR code on your Mac again.');
+  } catch {
+    return startError("Can't reach your Mac. Is the server running and are you on the same Wi-Fi?");
+  }
+
+  applySmoothing();
+  startSensors();
+  keepAwake();
+  $('start').hidden = true;
+  if (!motionAllowed) $('air').disabled = true;
+  transport.connect();
+  requestAnimationFrame(frame);
+}
+
+if (!window.isSecureContext) {
+  startError('This page must be opened over https:// for motion sensors to work.');
+} else if (!token) {
+  startError('Missing token. Scan the QR code shown on your Mac.');
+}
+$('start-btn').onclick = start;
+</script>
+</body>
+</html>
